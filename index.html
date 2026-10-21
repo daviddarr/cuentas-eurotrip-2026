@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cuentas Eurotrip 2026</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <h1>✈️ Cuentas Eurotrip 2026</h1>
+  <nav class="tabs" id="tabs">
+    <button data-tab="dashboard" class="active">Dashboard</button>
+    <button data-tab="nuevo">Nuevo pago</button>
+    <button data-tab="historial">Historial</button>
+    <button data-tab="personas">Personas</button>
+  </nav>
+  <div id="banner" class="banner" hidden></div>
+</header>
+
+<main>
+  <section id="tab-dashboard" class="tab"></section>
+  <section id="tab-nuevo" class="tab" hidden></section>
+  <section id="tab-historial" class="tab" hidden></section>
+  <section id="tab-personas" class="tab" hidden></section>
+</main>
+
+<dialog id="settleDialog">
+  <form method="dialog" id="settleForm">
+    <h3 id="settleTitle">Saldar cuenta</h3>
+    <p id="settleText"></p>
+    <label>Monto pagado
+      <input type="number" id="settleAmount" step="0.01" min="0.01" required>
+    </label>
+    <small>Deja el monto completo para dejar la cuenta en $0, o pon menos para un pago parcial.</small>
+    <div class="row end">
+      <button type="button" class="btn ghost" id="settleCancel">Cancelar</button>
+      <button type="submit" class="btn primary">Registrar pago</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="logic.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

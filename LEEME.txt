@@ -1,0 +1,13 @@
+CUENTAS EUROTRIP 2026
+=====================
+CAPTURAR (solo quien lleva las cuentas):
+1. Haz doble clic en index.html (Chrome, Safari o Firefox). No requiere internet.
+2. Captura personas y pagos como siempre.
+
+PUBLICAR PARA LOS DEMAS (GitHub Pages):
+1. En la pestaña Personas > Respaldo de datos > Exportar. Se descarga "data.json".
+2. En el repositorio de GitHub: Add file > Upload files > sube data.json (reemplaza el anterior) > Commit.
+3. En ~1 minuto, quien abra el link ve los datos actualizados en SOLO LECTURA.
+
+Los datos que capturas viven en el navegador donde los capturaste. Usa siempre el mismo navegador.
+Para editar desde la pagina publicada agrega ?editar al final del link.
