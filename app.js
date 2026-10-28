@@ -1,10 +1,19 @@
 (function () {
   var KEY = 'cuentas-claras-v1';
   var L = window.Ledger;
-  // Modo lectura: en la página publicada (http/https) se muestran los datos de data.json.
-  // Para editar: abre index.html desde la carpeta, o agrega ?editar a la URL.
-  var viewer = location.protocol !== 'file:' && !/[?&]editar/.test(location.search);
-  var state = viewer ? { people: [], events: [] } : load();
+  // Modo compartido: si config.js trae dbUrl y el link trae la clave (#k=...), los datos viven en Firebase.
+  // Si no, todo se guarda solo en este navegador (localStorage).
+  var CFG = window.CC_CONFIG || {};
+  var tripKey = (function () {
+    var m = /[#&]k=([\w-]+)/.exec(location.hash);
+    try { if (m) localStorage.setItem('cc-key', m[1]); return m ? m[1] : localStorage.getItem('cc-key'); } catch (e) { return m && m[1]; }
+  })();
+  var remote = !!(CFG.dbUrl && tripKey);
+  var DB = remote ? CFG.dbUrl.replace(/\/$/, '') + '/trips/' + tripKey : '';
+  var state = remote ? { people: [], events: [], log: [] } : load();
+  var synced = {}, inflight = 0, online = true;
+  var me = '';
+  try { me = localStorage.getItem('cc-me') || ''; } catch (e) {}
   var ui = { tab: 'dashboard', who: '', filter: 'all', sort: 'amount-desc', editing: null, settle: null };
 
   // ---------- utilidades ----------
@@ -19,10 +28,87 @@
   function name(id) { var p = person(id); return p ? p.name : '(eliminado)'; }
   function isActive(p) { var g = p.guardianId && person(p.guardianId); return p.active && (!g || g.active); }
   function load() {
-    try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.people && s.events) return s; } catch (e) {}
-    return { people: [], events: [] };
+    try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && s.people && s.events) { s.log = s.log || []; return s; } } catch (e) {}
+    return { people: [], events: [], log: [] };
   }
-  function save() { if (viewer) return; try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { toast('No se pudo guardar en este navegador'); } }
+  function flat(st) {
+    var o = {};
+    ['people', 'events', 'log'].forEach(function (k) { (st[k] || []).forEach(function (x) { o[k + '/' + x.id] = x; }); });
+    return o;
+  }
+  // Guarda: en local escribe todo; en modo compartido manda solo lo que cambió (una sola operación atómica)
+  function save() {
+    if (!remote) { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { toast('No se pudo guardar en este navegador'); } return; }
+    var cur = flat(state), patch = {}, next = {}, n = 0;
+    Object.keys(cur).forEach(function (k) { var j = JSON.stringify(cur[k]); next[k] = j; if (synced[k] !== j) { patch[k] = cur[k]; n++; } });
+    Object.keys(synced).forEach(function (k) { if (!(k in cur)) { patch[k] = null; n++; } });
+    if (!n) return;
+    inflight++;
+    fetch(DB + '.json', { method: 'PATCH', body: JSON.stringify(patch) }).then(function (r) {
+      if (!r.ok) throw 0;
+      synced = next; setOnline(true);
+    }).catch(function () { setOnline(false); toast('⚠ No se pudo guardar en la nube. Revisa tu conexión y vuelve a intentar.'); })
+      .then(function () { inflight--; });
+  }
+  function normalize(raw) {
+    function vals(o) { return o ? Object.keys(o).map(function (k) { return o[k]; }) : []; }
+    var st = { people: vals(raw && raw.people), events: vals(raw && raw.events), log: vals(raw && raw.log) };
+    st.people.forEach(function (p) { p.guardianId = p.guardianId || null; });
+    st.events.forEach(function (e) { if (e.type !== 'settle') e.participants = e.participants || []; });
+    st.events.sort(function (a, b) { return (a.date + ' ' + String(1e13 + (a.ts || 0)) + a.id).localeCompare(b.date + ' ' + String(1e13 + (b.ts || 0)) + b.id); });
+    st.log.sort(function (a, b) { return a.ts - b.ts; });
+    return st;
+  }
+  var lastSig = null, started = false;
+  function pull() {
+    if (!remote || inflight) return;
+    fetch(DB + '.json?t=' + Date.now()).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (raw) {
+      if (inflight) return;
+      setOnline(true);
+      var sig = JSON.stringify(raw || {});
+      if (sig === lastSig) return;
+      lastSig = sig;
+      state = normalize(raw);
+      synced = {}; var f = flat(state); Object.keys(f).forEach(function (k) { synced[k] = JSON.stringify(f[k]); });
+      if (!started) { started = true; show(ui.tab); ensureMe(); return; }
+      // no pisar lo que la persona está escribiendo
+      var busy = ui.tab === 'nuevo' || (ui.tab === 'personas' && document.activeElement && document.activeElement.tagName === 'INPUT');
+      if (!busy && !$('settleDialog').open) render();
+    }).catch(function () { setOnline(false); });
+  }
+  function setOnline(v) { online = v; renderBanner(); }
+  function renderBanner() {
+    var b = $('banner'); if (!remote) { b.hidden = true; return; }
+    b.hidden = false;
+    b.innerHTML = (online ? '🟢 En línea' : '🔴 Sin conexión') + ' · ' + (me ? '👤 ' + esc(me) : 'sin nombre') + ' <a href="#" id="changeMe">cambiar</a>';
+  }
+  function ensureMe() {
+    renderBanner();
+    if (me) return;
+    $('meList').innerHTML = state.people.filter(function (p) { return !p.guardianId; }).map(function (p) { return '<option value="' + esc(p.name) + '">'; }).join('');
+    if (!$('meDialog').open) $('meDialog').showModal();
+  }
+  $('banner').addEventListener('click', function (e) { if (e.target.id === 'changeMe') { e.preventDefault(); me = ''; ensureMe(); } });
+  $('meForm').addEventListener('submit', function () {
+    me = $('meName').value.trim();
+    try { localStorage.setItem('cc-me', me); } catch (e) {}
+    renderBanner();
+  });
+  // Registro de actividad ("Últimos movimientos")
+  function act(text) { state.log.push({ id: uid(), ts: Date.now(), who: me || 'Alguien', text: text }); }
+  function ago(ts) {
+    var m = Math.round((Date.now() - ts) / 60000);
+    if (m < 1) return 'justo ahora'; if (m < 60) return 'hace ' + m + ' min';
+    var h = Math.round(m / 60); if (h < 24) return 'hace ' + h + ' h';
+    return new Date(ts).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+  }
+  function activityPanel() {
+    var items = (state.log || []).slice(-12).reverse();
+    if (!items.length) return '';
+    return '<div class="panel"><h2>Últimos movimientos</h2><ul class="list">' + items.map(function (x) {
+      return '<li><span><b>' + esc(x.who) + '</b> ' + esc(x.text) + '</span><span class="muted">' + ago(x.ts) + '</span></li>';
+    }).join('') + '</ul></div>';
+  }
   var toastT;
   function toast(msg) { var t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { t.hidden = true; }, 2600); }
   function fmtDate(d) { var p = d.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
@@ -127,7 +213,7 @@
           '<details><summary>Ver movimientos</summary><ul class="mini">' + hist.map(function (ev) { return '<li><span>' + esc(evLabel(ev)) + '</span><span class="muted">' + fmtDate(ev.date) + '</span></li>'; }).join('') + '</ul></details></div>';
       }).join('') + '</div>';
     }
-    el.innerHTML = html;
+    el.innerHTML = html + activityPanel();
   }
   function evLabel(ev) {
     if (ev.type === 'settle') return (ev.deferred ? 'Pago mensual' : 'Pago') + ' de ' + name(ev.fromId) + ' a ' + name(ev.toId) + ' · ' + money(ev.amount);
@@ -163,7 +249,8 @@
   $('settleForm').addEventListener('submit', function () {
     var s = ui.settle, amt = toCents($('settleAmount').value);
     if (!s || !(amt > 0)) return;
-    state.events.push({ id: uid(), type: 'settle', date: today(), fromId: s.debtor, toId: s.creditor, amount: amt, deferred: s.deferred });
+    state.events.push({ id: uid(), type: 'settle', date: today(), ts: Date.now(), fromId: s.debtor, toId: s.creditor, amount: amt, deferred: s.deferred });
+    act('registró un pago' + (s.deferred ? ' mensual' : '') + ' de ' + name(s.debtor) + ' a ' + name(s.creditor) + ' por ' + money(amt));
     save(); render(); toast('Pago registrado ✓');
   });
 
@@ -251,9 +338,10 @@
     if (!L.shares(f).length) { toast('Elige al menos a una persona para repartir'); return; }
     if (ui.editing) {
       var ev = state.events.find(function (x) { return x.id === ui.editing; });
-      delete ev.msi; delete ev.start; Object.assign(ev, f); ui.editing = null; save(); toast('Pago actualizado ✓'); show('historial');
+      delete ev.msi; delete ev.start; Object.assign(ev, f); ui.editing = null; act('editó "' + f.desc + '" (' + money(f.amount) + ')'); save(); toast('Pago actualizado ✓'); show('historial');
     } else {
-      f.id = uid(); f.type = 'expense'; state.events.push(f); save(); toast('Pago registrado ✓'); renderForm();
+      f.id = uid(); f.type = 'expense'; f.ts = Date.now(); state.events.push(f);
+      act('registró "' + f.desc + '" por ' + money(f.amount) + ', pagó ' + name(f.payerId) + (f.msi ? ' a ' + f.msi + ' MSI' : '')); save(); toast('Pago registrado ✓'); renderForm();
     }
   });
 
@@ -276,6 +364,8 @@
   $('tab-historial').addEventListener('click', function (e) {
     var d = e.target.closest('[data-del]');
     if (d && confirm('¿Eliminar este movimiento? Los saldos se recalcularán.')) {
+      var gone = state.events.find(function (x) { return x.id === d.dataset.del; });
+      if (gone) act('eliminó ' + (gone.type === 'settle' ? 'un pago de ' + name(gone.fromId) + ' a ' + name(gone.toId) : '"' + gone.desc + '"') + ' (' + money(gone.amount) + ')');
       state.events = state.events.filter(function (x) { return x.id !== d.dataset.del; }); save(); renderHist(); toast('Eliminado');
     }
     var ed = e.target.closest('[data-edit]'); if (ed) { ui.editing = ed.dataset.edit; show('nuevo'); }
@@ -301,8 +391,8 @@
     html += '<div class="panel"><h2>Personas</h2>' + (guardians.length ? '<ul class="list">' + guardians.map(function (g) {
       return row(g, false) + state.people.filter(function (d) { return d.guardianId === g.id; }).map(function (d) { return row(d, true); }).join('');
     }).join('') + '</ul>' : '<div class="empty">Todavía no hay nadie. Agrega a la primera persona arriba.</div>') + '</div>';
-    html += '<div class="panel"><h2>Respaldo de datos</h2><p class="muted">La información vive en este navegador. Para pasarla a otra computadora, exporta un archivo e impórtalo allá.</p>' +
-      '<div class="row"><button class="btn ghost" id="bExport">⬇ Exportar respaldo</button><button class="btn ghost" id="bImport">⬆ Importar respaldo</button><button class="btn danger" id="bReset">Borrar todo</button></div>' +
+    html += '<div class="panel"><h2>Respaldo de datos</h2><p class="muted">' + (remote ? 'Los datos están en la nube y todos los ven. Exporta un respaldo de vez en cuando por si acaso.' : 'La información vive en este navegador. Para pasarla a otra computadora, exporta un archivo e impórtalo allá.') + '</p>' +
+      '<div class="row"><button class="btn ghost" id="bExport">⬇ Exportar respaldo</button><button class="btn ghost" id="bImport">⬆ Importar respaldo</button>' + (remote ? '' : '<button class="btn danger" id="bReset">Borrar todo</button>') + '</div>' +
       '<input type="file" id="fImport" accept="application/json" hidden></div>';
     el.innerHTML = html;
   }
@@ -311,6 +401,7 @@
     var n = $('pName').value.trim(); if (!n) return;
     if (state.people.some(function (p) { return p.name.toLowerCase() === n.toLowerCase(); })) { toast('Ya existe alguien con ese nombre'); return; }
     state.people.push({ id: uid(), name: n, guardianId: $('pGuard').value || null, active: true });
+    act('agregó a ' + n + ($('pGuard').value ? ' (dependiente de ' + name($('pGuard').value) + ')' : ''));
     save(); renderPeople(); toast('Agregado ✓');
   });
   $('tab-personas').addEventListener('click', function (e) {
@@ -320,21 +411,22 @@
       var p = person(b.dataset.baja), net = L.ledger(state);
       var open = state.people.some(function (q) { return q.id !== p.id && net(p.id, q.id) !== 0; });
       if (open && !confirm(p.name + ' tiene cuentas abiertas. Se ocultará de nuevos pagos pero sus saldos se conservan. ¿Continuar?')) return;
-      p.active = false; save(); renderPeople();
+      p.active = false; act('dio de baja a ' + p.name); save(); renderPeople();
     }
-    if (a) { person(a.dataset.alta).active = true; save(); renderPeople(); }
+    if (a) { person(a.dataset.alta).active = true; act('reactivó a ' + name(a.dataset.alta)); save(); renderPeople(); }
     if (r && confirm('¿Eliminar definitivamente a esta persona?')) {
       var id = r.dataset.rm;
+      act('eliminó a ' + name(id));
       state.people = state.people.filter(function (x) { return x.id !== id; });
       state.people.forEach(function (x) { if (x.guardianId === id) x.guardianId = null; });
       save(); renderPeople();
     }
     if (t.id === 'bExport') {
-      var blob = new Blob([JSON.stringify({ people: state.people, events: state.events, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
-      var link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'data.json'; link.click();
+      var blob = new Blob([JSON.stringify({ people: state.people, events: state.events, log: state.log, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+      var link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'cuentas-eurotrip-respaldo-' + today() + '.json'; link.click();
     }
     if (t.id === 'bImport') $('fImport').click();
-    if (t.id === 'bReset' && confirm('Esto borra TODAS las personas y pagos. ¿Seguro?')) { state = { people: [], events: [] }; save(); renderPeople(); toast('Datos borrados'); }
+    if (t.id === 'bReset' && confirm('Esto borra TODAS las personas y pagos. ¿Seguro?')) { state = { people: [], events: [], log: [] }; save(); renderPeople(); toast('Datos borrados'); }
   });
   $('tab-personas').addEventListener('change', function (e) {
     if (e.target.id !== 'fImport' || !e.target.files[0]) return;
@@ -344,20 +436,19 @@
         var s = JSON.parse(rd.result);
         if (!s.people || !s.events) throw 0;
         if (!confirm('Esto reemplazará los datos actuales por los del archivo. ¿Continuar?')) return;
-        state = s; save(); renderPeople(); toast('Respaldo importado ✓');
+        s.log = s.log || []; state = s; act('importó un respaldo'); save(); renderPeople(); toast('Respaldo importado ✓');
       } catch (err) { toast('Archivo no válido'); }
     };
     rd.readAsText(e.target.files[0]);
   });
 
-  if (viewer) {
-    document.body.classList.add('viewer');
-    fetch('data.json?t=' + Date.now()).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (d) {
-      state = { people: d.people || [], events: d.events || [] };
-      $('banner').hidden = false;
-      $('banner').textContent = '👀 Solo lectura' + (d.exportedAt ? ' · Actualizado ' + new Date(d.exportedAt).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' }) : '');
-      render();
-    }).catch(function () { $('tab-dashboard').innerHTML = '<div class="panel empty">Aún no hay datos publicados.</div>'; });
+  renderBanner();
+  if (remote) {
+    pull();
+    setInterval(pull, 5000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) pull(); });
+    $('tab-dashboard').innerHTML = '<div class="panel empty">Cargando…</div>';
+  } else {
+    show('dashboard');
   }
-  show('dashboard');
 })();

@@ -1,13 +1,12 @@
 CUENTAS EUROTRIP 2026
 =====================
-CAPTURAR (solo quien lleva las cuentas):
-1. Haz doble clic en index.html (Chrome, Safari o Firefox). No requiere internet.
-2. Captura personas y pagos como siempre.
+Uso local (sin internet): doble clic en index.html. Los datos quedan en ese navegador.
 
-PUBLICAR PARA LOS DEMAS (GitHub Pages):
-1. En la pestaña Personas > Respaldo de datos > Exportar. Se descarga "data.json".
-2. En el repositorio de GitHub: Add file > Upload files > sube data.json (reemplaza el anterior) > Commit.
-3. En ~1 minuto, quien abra el link ve los datos actualizados en SOLO LECTURA.
-
-Los datos que capturas viven en el navegador donde los capturaste. Usa siempre el mismo navegador.
-Para editar desde la pagina publicada agrega ?editar al final del link.
+Uso compartido (todos capturan y ven lo mismo):
+- Los datos viven en una Firebase Realtime Database gratuita.
+- config.js tiene la direccion de la base (dbUrl).
+- Cada persona entra con el link que incluye la clave: https://daviddarr.github.io/cuentas-eurotrip-2026/#k=CLAVE
+  La clave se guarda en el navegador despues de la primera vez.
+- Al entrar, la app pregunta "¿Quien eres?" para registrar quien hizo cada movimiento (Dashboard > Ultimos movimientos).
+- Se actualiza sola cada 5 segundos.
+Despues del viaje: borra el proyecto de Firebase y el repositorio y listo.

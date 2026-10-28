@@ -40,8 +40,21 @@
   </form>
 </dialog>
 
+<dialog id="meDialog">
+  <form method="dialog" id="meForm">
+    <h3>¿Quién eres?</h3>
+    <p class="muted">Se usa solo para mostrar quién hizo cada movimiento.</p>
+    <label>Tu nombre
+      <input type="text" id="meName" list="meList" required autocomplete="off">
+    </label>
+    <datalist id="meList"></datalist>
+    <div class="row end"><button type="submit" class="btn primary">Continuar</button></div>
+  </form>
+</dialog>
+
 <div id="toast" class="toast" hidden></div>
 
+<script src="config.js"></script>
 <script src="logic.js"></script>
 <script src="app.js"></script>
 </body>

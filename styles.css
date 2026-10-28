@@ -94,6 +94,5 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .stat small { display: block; margin-top: 2px; }
 #eMsiBox[hidden] { display: none; }
 
-/* modo lectura */
 .banner { background: var(--primary-soft); color: var(--primary); font-size: 13px; font-weight: 600; padding: 6px 20px; margin: 0 -20px; }
-body.viewer [data-tab="nuevo"], body.viewer [data-tab="personas"], body.viewer .btn.ok, body.viewer [data-edit], body.viewer [data-del] { display: none !important; }
+.banner a { color: var(--primary); }
